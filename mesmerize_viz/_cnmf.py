@@ -217,12 +217,18 @@ class EvalController:
         self._block_handlers = True
         for metric in self._float_metrics:
             metric_array = getattr(cnmf_obj.estimates, self._metric_array_mapping[metric])
-            for kind in ["slider", "spinbox"]:
-                # allow 100 steps
-                self._widgets[metric][kind].step = np.ptp(metric_array) / 100
-                self._widgets[metric][kind].min = metric_array.min()
-                self._widgets[metric][kind].max = metric_array.max()
-                self._widgets[metric][kind].value = cnmf_obj.params.get_group("quality")[metric]
+            # only if the metric has been populated 
+            if metric_array.size !=0:
+                for kind in ["slider", "spinbox"]:
+                    # allow 100 steps
+                    self._widgets[metric][kind].step = np.ptp(metric_array) / 100
+                    self._widgets[metric][kind].min = metric_array.min()
+                    self._widgets[metric][kind].max = metric_array.max()
+                    self._widgets[metric][kind].value = cnmf_obj.params.get_group("quality")[metric]
+            else:
+                # otherwise, disable the corresponding elements
+                for kind in ["slider", "spinbox"]:
+                    self._widgets[metric][kind].disabled = True
 
         self.use_cnn_checkbox.value = cnmf_obj.params.get_group("quality")["use_cnn"]
 
@@ -447,9 +453,8 @@ class CNMFVizContainer:
             **image_widget_kwargs
         }
 
-        # figure out start index by searching for cnmf or cnmfe items
         if start_index is None:
-            start_index = dataframe[(dataframe.algo == "cnmf") | (dataframe.algo == "cnmfe")].iloc[0].name
+            start_index = dataframe[dataframe.algo == "cnmf"].iloc[0].name
 
         self.current_row: int = start_index
 
@@ -482,11 +487,6 @@ class CNMFVizContainer:
             layout=Layout(width="350px")
         )
 
-        self._button_center_component = Button(
-            description="center on component",
-        )
-        self._button_center_component.on_click(self._center_on_component)
-
         # checkbox to zoom into components when selected
         self.checkbox_zoom_components = Checkbox(
             value=True,
@@ -506,7 +506,7 @@ class CNMFVizContainer:
         self._top_widget = VBox([
             HBox([self.datagrid, self.params_text_area]),
             HBox([self.component_slider, self.component_int_box, self._component_metrics_text]),
-            HBox([self._button_center_component, self.checkbox_zoom_components, self.zoom_components_scale])
+            HBox([self.checkbox_zoom_components, self.zoom_components_scale])
         ])
 
         self._dropdown_contour_colors = Dropdown(
@@ -688,11 +688,6 @@ class CNMFVizContainer:
 
         self._linear_selector_heatmap: fpl.LinearSelector = self._plot_heatmap["heatmap"].add_linear_selector()
 
-        # TODO: This is a temporary monkey patch until next release of fastplotlib
-        self._component_linear_selector._initial_controller_state = True
-        self._linear_selector_temporal._initial_controller_state = True
-        self._linear_selector_heatmap._initial_controller_state = True
-
         # sync the linear selectors
         self._synchronizer.add(self._linear_selector_temporal)
         self._synchronizer.add(self._linear_selector_heatmap)
@@ -812,30 +807,32 @@ class CNMFVizContainer:
             # prevents weird slider movement
             self._component_linear_selector.selection = index
 
-        if self.checkbox_zoom_components.value:
-            self._zoom_into_component(index)
+        self._zoom_into_component(index)
 
         self.component_int_box.unobserve_all()
         self.component_int_box.value = index
         self.component_int_box.observe(
             lambda change: self.set_component_index(change["new"]), "value"
         )
-
-        metrics = (f"snr: {self._cnmf_obj.estimates.SNR_comp[index]:.02f}, "
-                   f"r_values: {self._cnmf_obj.estimates.r_values[index]:.02f}, "
-                   f"cnn: {self._cnmf_obj.estimates.cnn_preds[index]:.02f} ")
+        if self.cnmf_obj.params.get_group("quality")["use_cnn"]:
+            metrics = (f"snr: {self._cnmf_obj.estimates.SNR_comp[index]:.02f}, "
+                    f"r_values: {self._cnmf_obj.estimates.r_values[index]:.02f}, "
+                    f"cnn: {self._cnmf_obj.estimates.cnn_preds[index]:.02f} ")
+        else:
+            metrics = (f"snr: {self._cnmf_obj.estimates.SNR_comp[index]:.02f}, "
+                    f"r_values: {self._cnmf_obj.estimates.r_values[index]:.02f}, ")
 
         self._component_metrics_text.value = metrics
 
     def _zoom_into_component(self, index: int):
+        if not self.checkbox_zoom_components.value:
+            return
+
         for subplot in self._image_widget.gridplot:
             subplot.camera.show_object(
                 subplot["contours"].graphics[index].world_object,
                 scale=self.zoom_components_scale.value
             )
-
-    def _center_on_component(self, obj):
-        self._zoom_into_component(self.component_index)
 
     def _set_frame_index_from_linear_selector(self, ev):
         # TODO: hacky mess, need to make ImageWidget emit events
